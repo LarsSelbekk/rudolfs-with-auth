@@ -21,6 +21,7 @@ use std::io;
 
 use derive_more::{Display, From};
 
+use crate::auth::AuthError;
 use crate::sha256::{Sha256Error, Sha256VerifyError};
 use crate::storage::{self, Storage};
 
@@ -36,6 +37,7 @@ pub enum Error {
     S3(storage::S3Error),
     S3DiskCache(<storage::S3DiskCache as Storage>::Error),
     Askama(askama::Error),
+    Auth(AuthError),
 }
 
 impl std::error::Error for Error {}

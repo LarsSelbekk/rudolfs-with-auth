@@ -19,11 +19,14 @@
 // SOFTWARE.
 use std::fs::{self, File};
 use std::io;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
 
 use duct::cmd;
+use jsonwebtoken::{Algorithm, Header};
 use rand::Rng;
+use serde::Serialize;
 
 /// A temporary git repository.
 pub struct GitRepo {
@@ -103,9 +106,54 @@ impl GitRepo {
     }
 
     pub fn lfs_push(&self) -> io::Result<()> {
+        cmd!("git", "config", "credential.helper", "")
+            .dir(self.repo.path())
+            .run()?;
         cmd!("git", "lfs", "push", "origin", "master")
             .dir(self.repo.path())
             .run()?;
+        cmd!("git", "config", "--unset", "credential.helper")
+            .dir(self.repo.path())
+            .run()?;
+        Ok(())
+    }
+
+    pub fn lfs_push_authorized(
+        &self,
+        secret: &str,
+        namespace: &str,
+    ) -> io::Result<()> {
+        cmd!("git", "config", "credential.username", "username")
+            .dir(self.repo.path())
+            .run()?;
+
+        #[derive(Serialize)]
+        struct Claims {
+            namespaces: Vec<String>,
+        }
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                namespaces: vec![namespace.into()],
+            },
+            &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        File::create(self.repo.path().join("exec.sh"))?
+            .write_all(format!("#!/bin/sh\nexec echo {}", token).as_bytes())?;
+
+        let _ = cmd!("chmod", "+x", "exec.sh").dir(self.repo.path()).run();
+
+        cmd!("git", "lfs", "push", "origin", "master")
+            .dir(self.repo.path())
+            .env("GIT_ASKPASS", "./exec.sh")
+            .run()?;
+
+        cmd!("git", "config", "--unset", "credential.username")
+            .dir(self.repo.path())
+            .run()?;
+
         Ok(())
     }
 

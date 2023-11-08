@@ -32,7 +32,8 @@ use tokio::sync::oneshot;
 use common::{init_logger, GitRepo};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn local_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
+async fn local_authenticated_smoke_test(
+) -> Result<(), Box<dyn std::error::Error>> {
     init_logger();
 
     // Make sure our seed is deterministic. This makes it easier to reproduce
@@ -42,9 +43,11 @@ async fn local_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
     let data = tempfile::TempDir::new()?;
     let key = rng.gen();
 
+    let secret = "supersecret".to_string();
+    let namespace = "test/test".to_string();
     let server = LocalServerBuilder::new(data.path().into(), key);
     let server = server
-        .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), None)
+        .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), Some(secret.clone()))
         .await?;
     let addr = server.addr();
 
@@ -59,13 +62,23 @@ async fn local_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
     repo.commit("Add LFS objects")?;
 
     // Make sure we can push LFS objects to the server.
-    repo.lfs_push()?;
+    repo.lfs_push_authorized(&secret, &namespace)?;
 
     // Push again. This should be super fast.
-    repo.lfs_push()?;
+    repo.lfs_push_authorized(&secret, &namespace)?;
 
     // This should be fast since we already have the data
     repo.lfs_pull()?;
+
+    // Make sure we can't push when unauthenticated
+    repo.add_random(Path::new("4mb_2.bin"), 4 * 1024 * 1024, &mut rng)?;
+    repo.add_random(Path::new("8mb_2.bin"), 8 * 1024 * 1024, &mut rng)?;
+    repo.add_random(Path::new("16mb_2.bin"), 16 * 1024 * 1024, &mut rng)?;
+    repo.commit("Add more LFS objects")?;
+
+    if repo.lfs_push().is_ok() {
+        return Err("Managed to push while unauthenticated".into());
+    }
 
     // Make sure we can re-download the same objects in another repo
     let repo_clone = repo.clone_repo().expect("unable to clone");
@@ -73,14 +86,6 @@ async fn local_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
     // This should be fast since the lfs data should come along properly with
     // the clone
     repo_clone.lfs_pull()?;
-
-    // Add some more files and make sure you can pull those into the clone
-    repo.add_random(Path::new("4mb_2.bin"), 4 * 1024 * 1024, &mut rng)?;
-    repo.add_random(Path::new("8mb_2.bin"), 8 * 1024 * 1024, &mut rng)?;
-    repo.add_random(Path::new("16mb_2.bin"), 16 * 1024 * 1024, &mut rng)?;
-    repo.commit("Add LFS objects 2")?;
-
-    repo_clone.pull()?;
 
     shutdown_tx.send(()).expect("server died too soon");
 

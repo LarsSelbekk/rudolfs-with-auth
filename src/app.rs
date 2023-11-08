@@ -28,15 +28,15 @@ use futures::{
     future::{self, BoxFuture},
     stream::TryStreamExt,
 };
-use http::HeaderMap;
-use http::{self, header, StatusCode, Uri};
+use http::{self, header, HeaderMap, StatusCode, Uri};
 use hyper::{self, body::Body, service::Service, Method, Request, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::auth::AuthError;
 use crate::error::Error;
 use crate::hyperext::RequestExt;
-use crate::lfs;
 use crate::storage::{LFSObject, Namespace, Storage, StorageKey};
+use crate::{auth, lfs};
 use std::time::Duration;
 
 const UPLOAD_EXPIRATION: Duration = Duration::from_secs(30 * 60);
@@ -72,11 +72,15 @@ struct IndexTemplate<'a> {
 #[derive(Clone)]
 pub struct App<S> {
     storage: S,
+    private_key: Option<auth::JwtKeyType>,
 }
 
 impl<S> App<S> {
-    pub fn new(storage: S) -> Self {
-        App { storage }
+    pub fn new(storage: S, private_key: Option<auth::JwtKeyType>) -> Self {
+        App {
+            storage,
+            private_key,
+        }
     }
 }
 
@@ -109,6 +113,7 @@ where
     async fn api(
         storage: S,
         req: Request<Body>,
+        private_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
         let mut parts = req.uri().path().split('/').filter(|s| !s.is_empty());
 
@@ -140,17 +145,20 @@ where
                     }
                 };
 
-                let key = StorageKey::new(namespace, oid);
+                let key = StorageKey::new(namespace.clone(), oid);
 
                 match *req.method() {
                     Method::GET => Self::download(storage, req, key).await,
-                    Method::PUT => Self::upload(storage, req, key).await,
+                    Method::PUT => {
+                        Self::upload(storage, req, key, namespace, private_key)
+                            .await
+                    }
                     _ => Self::not_found(req),
                 }
             }
             Some("objects") => match (req.method(), parts.next()) {
                 (&Method::POST, Some("batch")) => {
-                    Self::batch(storage, req, namespace).await
+                    Self::batch(storage, req, namespace, private_key).await
                 }
                 (&Method::POST, Some("verify")) => {
                     Self::verify(storage, req, namespace).await
@@ -185,7 +193,15 @@ where
         storage: S,
         req: Request<Body>,
         key: StorageKey,
+        namespace: Namespace,
+        private_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
+        if let Err(err) =
+            auth::verify_edit_access(&namespace, req.headers(), &private_key)
+        {
+            return auth_error_to_response(err, &namespace);
+        }
+
         let len = req
             .headers()
             .get("Content-Length")
@@ -247,6 +263,7 @@ where
         storage: S,
         req: Request<Body>,
         namespace: Namespace,
+        private_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
         // Get the host name and scheme.
         let uri = req.base_uri().path_and_query("/").build().unwrap();
@@ -255,6 +272,16 @@ where
         match from_json::<lfs::BatchRequest>(req.into_body()).await {
             Ok(val) => {
                 let operation = val.operation;
+
+                if let lfs::Operation::Upload = operation {
+                    if let Err(err) = auth::verify_edit_access(
+                        &namespace,
+                        &headers,
+                        &private_key,
+                    ) {
+                        return auth_error_to_response(err, &namespace);
+                    }
+                }
 
                 // For each object, check if it exists in the storage
                 // backend.
@@ -502,9 +529,37 @@ where
         if req.uri().path() == "/" {
             Box::pin(future::ready(Self::index(req)))
         } else if req.uri().path().starts_with("/api/") {
-            Box::pin(Self::api(self.storage.clone(), req))
+            Box::pin(Self::api(
+                self.storage.clone(),
+                req,
+                self.private_key.clone(),
+            ))
         } else {
             Box::pin(future::ready(Self::not_found(req)))
         }
+    }
+}
+
+fn auth_error_to_response(
+    error: AuthError,
+    namespace: &Namespace,
+) -> Result<Response<Body>, Error> {
+    match error {
+        AuthError::Unauthenticated => Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(
+                header::WWW_AUTHENTICATE,
+                format!("Basic realm={}", namespace),
+            )
+            .body(Body::from("Unauthenticated"))
+            .map_err(Into::into),
+        AuthError::Unauthorized => Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Body::from("Unauthorized"))
+            .map_err(Into::into),
+        AuthError::Malformed => Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("Bad header: Authorization"))
+            .map_err(Into::into),
     }
 }
