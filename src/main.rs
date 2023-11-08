@@ -17,11 +17,14 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use futures::future::OptionFuture;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 use hex::FromHex;
 use structopt::StructOpt;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 use rudolfs::{Cache, LocalServerBuilder, S3ServerBuilder};
 
@@ -63,11 +66,17 @@ struct GlobalArgs {
 
     /// Encryption key to use.
     #[structopt(
-        long = "key",
-        parse(try_from_str = FromHex::from_hex),
-        env = "RUDOLFS_KEY"
+    long = "key",
+    parse(try_from_str = FromHex::from_hex),
+    env = "RUDOLFS_KEY"
     )]
     key: [u8; 32],
+
+    /// Path of the file containing the private key to use for edit-access
+    /// restriction, if any. If not specified, no authentication will be used.
+    /// Downloading is always allowed unauthenticated.
+    #[structopt(long = "private-key-file", env = "RUDOLFS_PRIVATE_KEY_FILE")]
+    private_key_file: Option<PathBuf>,
 
     /// Root directory of the object cache. If not specified or if the local
     /// disk is the storage backend, then no local disk cache will be used.
@@ -139,6 +148,17 @@ impl Args {
             None => SocketAddr::from(([0, 0, 0, 0], self.global.port)),
         };
 
+        if self.global.private_key_file.is_some() {
+            log::info!(
+                "Restricting mutation to authorized users using tokens."
+            );
+        } else {
+            log::info!(
+                "Allowing unauthenticated mutation, only use in a secure \
+                 environment."
+            );
+        }
+
         log::info!("Initializing storage...");
 
         match self.backend {
@@ -171,7 +191,15 @@ impl S3Args {
             builder.cache(Cache::new(cache_dir, max_cache_size));
         }
 
-        builder.run(addr).await
+        let private_key = OptionFuture::from(
+            global_args
+                .private_key_file
+                .as_ref()
+                .map(read_private_key_file),
+        )
+        .await;
+
+        builder.run(addr, private_key).await
     }
 }
 
@@ -191,8 +219,31 @@ impl LocalArgs {
             builder.cache(Cache::new(cache_dir, max_cache_size));
         }
 
-        builder.run(addr).await
+        let private_key = OptionFuture::from(
+            global_args
+                .private_key_file
+                .as_ref()
+                .map(read_private_key_file),
+        )
+        .await;
+
+        builder.run(addr, private_key).await
     }
+}
+
+async fn read_private_key_file(path: &PathBuf) -> String {
+    let mut buf = Vec::new();
+    File::open(path)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("Private key file not found: {:?}\nError: {}", path, err)
+        })
+        .read_to_end(&mut buf)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("Private key file not found: {:?}\nError: {}", path, err)
+        });
+    String::from_utf8(buf).expect("Invalid UTF8 in private key file")
 }
 
 #[tokio::main]

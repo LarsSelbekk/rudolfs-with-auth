@@ -90,7 +90,9 @@ async fn s3_smoke_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = S3ServerBuilder::new(creds.bucket, key);
     server.prefix("test_lfs".into());
 
-    let server = server.spawn(SocketAddr::from(([0, 0, 0, 0], 0))).await?;
+    let server = server
+        .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), None)
+        .await?;
     let addr = server.addr();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();

@@ -1,10 +1,51 @@
-# Rudo*lfs*
+# Rudo*lfs* with auth
 
-[![Cirrus CI - Specific Branch Build Status](https://img.shields.io/cirrus/github/jasonwhite/rudolfs/master?style=for-the-badge)](https://cirrus-ci.com/github/jasonwhite/rudolfs)
-[![Crates.io](https://img.shields.io/crates/v/rudolfs?style=for-the-badge)](https://crates.io/crates/rudolfs)
-[![AUR version](https://img.shields.io/aur/version/rudolfs?style=for-the-badge)](https://aur.archlinux.org/packages/rudolfs/)
-[![Docker Image Version (latest semver)](https://img.shields.io/docker/v/jasonwhite0/rudolfs?label=Docker&sort=semver&style=for-the-badge)](https://hub.docker.com/r/jasonwhite0/rudolfs)
-[![Docker Image Size (latest semver)](https://img.shields.io/docker/image-size/jasonwhite0/rudolfs?sort=semver&style=for-the-badge)](https://hub.docker.com/r/jasonwhite0/rudolfs)
+This is a fork of [Rudo*lfs*](https://github.com/jasonwhite/rudolfs) with added
+authentication.
+The fork is only intended for personal use, no guarantees are provided.
+
+To use the edit-access authentication feature, use the CLI option
+`--private-key-file <PATH>` (or environment variable
+`RUDOLFS_PRIVATE_KEY_FILE=<PATH>`) with the path to the HS256 private key you
+wish to use. When the option is set, clients will need to include a token to
+upload files. Note that downloading files is still allowed unauthenticated. To
+generate the token, copy your private key (non-base64-encoded) to
+[jwt.io](https://jwt.io/) and use it to generate a token with the `HS256`
+algorithm and a payload like this:
+
+```json
+{
+  "exp": 1709251200,
+  "namespaces": [
+    "yourname",
+    "yourorg/yourrepo"
+  ]
+}
+```
+
+This example token would give the holder edit-access to all repositories under
+`yourname`, in addition to the repository `yourorg/yourrepo`. The value of the
+`exp` field makes this token expire `1709251200` seconds after Epoch, which is
+2024-03-01 - if the `exp` field is left out, it will never expire. It is
+recommended to set expiration dates, as tokens will otherwise stay valid until
+the private key is switched out. Also take care to use the correct format for
+the expiration field, as a misspelled field name or non-number value will cause
+the expiration field to be silently ignored.
+
+When pushing LFS
+files, you will be prompted for username and password. The username can be
+anything (though the LFS client seems to crash if it's empty), and the password
+must be the generated token. Note that the credentials may be stored by git,
+posing a problem if the token needs to be changed. See
+[Git credential helpers](https://git-scm.com/doc/credential-helpers) for an
+overview. Also note that the LFS authentication is entirely separate from the
+repository authentication with e.g. GitHub, so push-access to the repository
+does not grant push-access to LFS, or vice versa.
+
+
+# Original README
+
+---
 
 A high-performance, caching Git LFS server with an AWS S3 back-end.
 
