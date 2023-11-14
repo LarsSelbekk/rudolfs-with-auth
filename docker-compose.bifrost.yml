@@ -1,0 +1,32 @@
+# Copy this file to another location and modify as necessary.
+version: '3'
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rudolfs
+    volumes:
+      - /mnt/user/appdata/rudolfs:/data
+    restart: unless-stopped
+    networks:
+      - reverse-proxy
+    environment:
+      - LFS_ENCRYPTION_KEY
+      - RUDOLFS_AUTH_KEY
+    entrypoint:
+      - /tini
+      - --
+      - /rudolfs
+      - --cache-dir
+      - /data
+      - --key
+      - ${LFS_ENCRYPTION_KEY?}
+      - --port
+      - "80"
+      - local
+      - --path=/data
+
+networks:
+  reverse-proxy:
+    external: true
