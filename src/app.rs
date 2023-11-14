@@ -72,15 +72,12 @@ struct IndexTemplate<'a> {
 #[derive(Clone)]
 pub struct App<S> {
     storage: S,
-    private_key: Option<auth::JwtKeyType>,
+    auth_key: Option<auth::JwtKeyType>,
 }
 
 impl<S> App<S> {
-    pub fn new(storage: S, private_key: Option<auth::JwtKeyType>) -> Self {
-        App {
-            storage,
-            private_key,
-        }
+    pub fn new(storage: S, auth_key: Option<auth::JwtKeyType>) -> Self {
+        App { storage, auth_key }
     }
 }
 
@@ -113,7 +110,7 @@ where
     async fn api(
         storage: S,
         req: Request<Body>,
-        private_key: Option<auth::JwtKeyType>,
+        auth_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
         let mut parts = req.uri().path().split('/').filter(|s| !s.is_empty());
 
@@ -150,7 +147,7 @@ where
                 match *req.method() {
                     Method::GET => Self::download(storage, req, key).await,
                     Method::PUT => {
-                        Self::upload(storage, req, key, namespace, private_key)
+                        Self::upload(storage, req, key, namespace, auth_key)
                             .await
                     }
                     _ => Self::not_found(req),
@@ -158,7 +155,7 @@ where
             }
             Some("objects") => match (req.method(), parts.next()) {
                 (&Method::POST, Some("batch")) => {
-                    Self::batch(storage, req, namespace, private_key).await
+                    Self::batch(storage, req, namespace, auth_key).await
                 }
                 (&Method::POST, Some("verify")) => {
                     Self::verify(storage, req, namespace).await
@@ -194,10 +191,10 @@ where
         req: Request<Body>,
         key: StorageKey,
         namespace: Namespace,
-        private_key: Option<auth::JwtKeyType>,
+        auth_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
         if let Err(err) =
-            auth::verify_edit_access(&namespace, req.headers(), &private_key)
+            auth::verify_edit_access(&namespace, req.headers(), &auth_key)
         {
             return auth_error_to_response(err, &namespace);
         }
@@ -263,7 +260,7 @@ where
         storage: S,
         req: Request<Body>,
         namespace: Namespace,
-        private_key: Option<auth::JwtKeyType>,
+        auth_key: Option<auth::JwtKeyType>,
     ) -> Result<Response<Body>, Error> {
         // Get the host name and scheme.
         let uri = req.base_uri().path_and_query("/").build().unwrap();
@@ -275,9 +272,7 @@ where
 
                 if let lfs::Operation::Upload = operation {
                     if let Err(err) = auth::verify_edit_access(
-                        &namespace,
-                        &headers,
-                        &private_key,
+                        &namespace, &headers, &auth_key,
                     ) {
                         return auth_error_to_response(err, &namespace);
                     }
@@ -532,7 +527,7 @@ where
             Box::pin(Self::api(
                 self.storage.clone(),
                 req,
-                self.private_key.clone(),
+                self.auth_key.clone(),
             ))
         } else {
             Box::pin(future::ready(Self::not_found(req)))

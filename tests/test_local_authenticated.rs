@@ -19,6 +19,7 @@
 // SOFTWARE.
 mod common;
 
+use base64::Engine;
 use std::net::SocketAddr;
 use std::path::Path;
 
@@ -43,11 +44,17 @@ async fn local_authenticated_smoke_test(
     let data = tempfile::TempDir::new()?;
     let key = rng.gen();
 
-    let secret = "supersecret".to_string();
+    let secret: [u8; 32] = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::default(),
+    )
+    .decode("9MzGNi53MG7iSIzfMErWGtdjbFkdoJZXhQyUSCDwRkc=")?
+    .try_into()
+    .unwrap();
     let namespace = "test/test".to_string();
     let server = LocalServerBuilder::new(data.path().into(), key);
     let server = server
-        .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), Some(secret.clone()))
+        .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), Some(secret))
         .await?;
     let addr = server.addr();
 

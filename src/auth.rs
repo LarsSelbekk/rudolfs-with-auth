@@ -29,11 +29,11 @@ pub type JwtKeyType = jsonwebtoken::DecodingKey;
 pub fn verify_edit_access(
     namespace: &Namespace,
     headers: &HeaderMap,
-    private_key: &Option<JwtKeyType>,
+    auth_key: &Option<JwtKeyType>,
 ) -> Result<(), AuthError> {
-    match private_key {
+    match auth_key {
         None => Ok(()),
-        Some(private_key) => match headers.get(header::AUTHORIZATION) {
+        Some(auth_key) => match headers.get(header::AUTHORIZATION) {
             None => Err(AuthError::Unauthenticated),
             Some(auth) => {
                 match auth
@@ -54,7 +54,7 @@ pub fn verify_edit_access(
                         .unwrap();
 
                         if let Some(token) = decoded.split(':').nth(1) {
-                            if verify_token(token, namespace, private_key) {
+                            if verify_token(token, namespace, auth_key) {
                                 Ok(())
                             } else {
                                 Err(AuthError::Unauthorized)
@@ -78,13 +78,13 @@ pub struct TokenPayload {
 pub fn verify_token(
     token: &str,
     namespace: &Namespace,
-    private_key: &JwtKeyType,
+    auth_key: &JwtKeyType,
 ) -> bool {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.required_spec_claims = HashSet::new();
 
     let result =
-        jsonwebtoken::decode::<TokenPayload>(token, private_key, &validation);
+        jsonwebtoken::decode::<TokenPayload>(token, auth_key, &validation);
 
     if result.is_err() {
         return false;
@@ -96,6 +96,6 @@ pub fn verify_token(
     })
 }
 
-pub fn parse_private_key(private_key: String) -> JwtKeyType {
-    JwtKeyType::from_secret(private_key.as_bytes())
+pub fn parse_auth_key(auth_key: [u8; 32]) -> JwtKeyType {
+    JwtKeyType::from_secret(&auth_key)
 }

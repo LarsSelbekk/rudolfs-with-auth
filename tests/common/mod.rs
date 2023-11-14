@@ -121,7 +121,7 @@ impl GitRepo {
 
     pub fn lfs_push_authorized(
         &self,
-        secret: &str,
+        secret: &[u8; 32],
         namespace: &str,
     ) -> io::Result<()> {
         cmd!("git", "config", "credential.username", "username")
@@ -137,7 +137,7 @@ impl GitRepo {
             &Claims {
                 namespaces: vec![namespace.into()],
             },
-            &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+            &jsonwebtoken::EncodingKey::from_secret(secret),
         )
         .unwrap();
 

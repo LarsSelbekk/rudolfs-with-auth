@@ -1,30 +1,9 @@
-// Copyright (c) 2021 Jason White
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-use futures::future::OptionFuture;
+use base64::Engine;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 use hex::FromHex;
 use structopt::StructOpt;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
 
 use rudolfs::{Cache, LocalServerBuilder, S3ServerBuilder};
 
@@ -72,11 +51,15 @@ struct GlobalArgs {
     )]
     key: [u8; 32],
 
-    /// Path of the file containing the private key to use for edit-access
-    /// restriction, if any. If not specified, no authentication will be used.
+    /// The hex-formatted secret key to use for edit-access restriction, if
+    /// any. If not specified, no authentication will be used.
     /// Downloading is always allowed unauthenticated.
-    #[structopt(long = "private-key-file", env = "RUDOLFS_PRIVATE_KEY_FILE")]
-    private_key_file: Option<PathBuf>,
+    #[structopt(
+    long = "auth-key",
+    env = "RUDOLFS_AUTH_KEY",
+    parse(try_from_str = try_parse_base64)
+    )]
+    auth_key: Option<[u8; 32]>,
 
     /// Root directory of the object cache. If not specified or if the local
     /// disk is the storage backend, then no local disk cache will be used.
@@ -148,7 +131,7 @@ impl Args {
             None => SocketAddr::from(([0, 0, 0, 0], self.global.port)),
         };
 
-        if self.global.private_key_file.is_some() {
+        if self.global.auth_key.is_some() {
             log::info!(
                 "Restricting mutation to authorized users using tokens."
             );
@@ -191,15 +174,7 @@ impl S3Args {
             builder.cache(Cache::new(cache_dir, max_cache_size));
         }
 
-        let private_key = OptionFuture::from(
-            global_args
-                .private_key_file
-                .as_ref()
-                .map(read_private_key_file),
-        )
-        .await;
-
-        builder.run(addr, private_key).await
+        builder.run(addr, global_args.auth_key).await
     }
 }
 
@@ -219,31 +194,19 @@ impl LocalArgs {
             builder.cache(Cache::new(cache_dir, max_cache_size));
         }
 
-        let private_key = OptionFuture::from(
-            global_args
-                .private_key_file
-                .as_ref()
-                .map(read_private_key_file),
-        )
-        .await;
-
-        builder.run(addr, private_key).await
+        builder.run(addr, global_args.auth_key).await
     }
 }
 
-async fn read_private_key_file(path: &PathBuf) -> String {
-    let mut buf = Vec::new();
-    File::open(path)
-        .await
-        .unwrap_or_else(|err| {
-            panic!("Private key file not found: {:?}\nError: {}", path, err)
-        })
-        .read_to_end(&mut buf)
-        .await
-        .unwrap_or_else(|err| {
-            panic!("Private key file not found: {:?}\nError: {}", path, err)
-        });
-    String::from_utf8(buf).expect("Invalid UTF8 in private key file")
+fn try_parse_base64(inp: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let decoded = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::default(),
+    )
+    .decode(inp)?;
+    decoded[..]
+        .try_into()
+        .map_err(|_| "Auth key must be 256 base64-encoded bits".into())
 }
 
 #[tokio::main]

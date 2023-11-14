@@ -43,7 +43,6 @@ use hyper::{
 };
 
 use crate::app::App;
-use crate::auth::parse_private_key;
 use crate::error::Error;
 use crate::logger::Logger;
 use crate::storage::{Cached, Disk, Encrypted, Retrying, Storage, Verify, S3};
@@ -138,10 +137,10 @@ impl S3ServerBuilder {
     pub async fn spawn(
         mut self,
         addr: SocketAddr,
-        private_key: Option<String>,
+        auth_key: Option<[u8; 32]>,
     ) -> Result<Box<dyn Server + Unpin + Send>, Box<dyn std::error::Error>>
     {
-        let private_key = private_key.map(auth::parse_private_key);
+        let auth_key = auth_key.map(auth::parse_auth_key);
         let prefix = self.prefix.unwrap_or_else(|| String::from("lfs"));
 
         if self.cdn.is_some() {
@@ -179,11 +178,11 @@ impl S3ServerBuilder {
 
                 let cache = Cached::new(cache.max_size, disk, s3).await?;
                 let storage = Verify::new(Encrypted::new(self.key, cache));
-                Ok(Box::new(spawn_server(storage, &addr, private_key)))
+                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
             }
             None => {
                 let storage = Verify::new(Encrypted::new(self.key, s3));
-                Ok(Box::new(spawn_server(storage, &addr, private_key)))
+                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
             }
         }
     }
@@ -193,9 +192,9 @@ impl S3ServerBuilder {
     pub async fn run(
         self,
         addr: SocketAddr,
-        private_key: Option<String>,
+        auth_key: Option<[u8; 32]>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let server = self.spawn(addr, private_key).await?;
+        let server = self.spawn(addr, auth_key).await?;
 
         log::info!("Listening on {}", server.addr());
 
@@ -243,16 +242,16 @@ impl LocalServerBuilder {
     pub async fn spawn(
         self,
         addr: SocketAddr,
-        private_key: Option<String>,
+        auth_key: Option<[u8; 32]>,
     ) -> Result<impl Server, Box<dyn std::error::Error>> {
         let storage = Disk::new(self.path).map_err(Error::from).await?;
         let storage = Verify::new(Encrypted::new(self.key, storage));
 
         log::info!("Local disk storage initialized.");
 
-        let private_key = private_key.map(parse_private_key);
+        let auth_key = auth_key.map(auth::parse_auth_key);
 
-        Ok(spawn_server(storage, &addr, private_key))
+        Ok(spawn_server(storage, &addr, auth_key))
     }
 
     /// Spawns the server and runs it to completion. This will run forever
@@ -260,9 +259,9 @@ impl LocalServerBuilder {
     pub async fn run(
         self,
         addr: SocketAddr,
-        private_key: Option<String>,
+        auth_key: Option<[u8; 32]>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let server = self.spawn(addr, private_key).await?;
+        let server = self.spawn(addr, auth_key).await?;
 
         log::info!("Listening on {}", server.addr());
 
@@ -274,7 +273,7 @@ impl LocalServerBuilder {
 fn spawn_server<S>(
     storage: S,
     addr: &SocketAddr,
-    private_key: Option<auth::JwtKeyType>,
+    auth_key: Option<auth::JwtKeyType>,
 ) -> impl Server
 where
     S: Storage + Send + Sync + 'static,
@@ -285,7 +284,7 @@ where
 
     let new_service = make_service_fn(move |socket: &AddrStream| {
         // Create our app.
-        let service = App::new(storage.clone(), private_key.clone());
+        let service = App::new(storage.clone(), auth_key.clone());
 
         // Add logging middleware
         future::ok::<_, Infallible>(Logger::new(socket.remote_addr(), service))

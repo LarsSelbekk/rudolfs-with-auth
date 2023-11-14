@@ -5,13 +5,14 @@ authentication.
 The fork is only intended for personal use, no guarantees are provided.
 
 To use the edit-access authentication feature, use the CLI option
-`--private-key-file <PATH>` (or environment variable
-`RUDOLFS_PRIVATE_KEY_FILE=<PATH>`) with the path to the HS256 private key you
-wish to use. When the option is set, clients will need to include a token to
-upload files. Note that downloading files is still allowed unauthenticated. To
-generate the token, copy your private key (non-base64-encoded) to
-[jwt.io](https://jwt.io/) and use it to generate a token with the `HS256`
-algorithm and a payload like this:
+`--auth-key <KEY>` (or environment variable `RUDOLFS_AUTH_KEY=<KEY>`) with KEY
+as the hex-formatted HS256 private key you wish to use. One can use
+`openssl rand 32 | base64` to get a good size key. When the option is set,
+clients will need to include a token to upload files. Note that downloading
+files is still allowed unauthenticated. To generate the token, copy your
+private key to [jwt.io](https://jwt.io/) and use it (check the box for
+base64-encoded) to generate a token with the `HS256` algorithm and a payload
+like this:
 
 ```json
 {
