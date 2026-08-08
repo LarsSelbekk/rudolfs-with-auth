@@ -85,8 +85,6 @@ jobs:
     needs:
       - check
       - test
-      - rustfmt
-      - clippy
     permissions:
       contents: read
       packages: write
