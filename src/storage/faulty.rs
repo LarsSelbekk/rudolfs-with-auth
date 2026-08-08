@@ -54,8 +54,8 @@ impl<S> Backend<S> {
 
 fn faulty_stream(stream: ByteStream) -> ByteStream {
     Box::pin(stream.map(|item| {
-        if rand::thread_rng().gen::<u8>() == 0 {
-            Err(io::Error::new(io::ErrorKind::Other, "injected fault"))
+        if rand::thread_rng().random::<u8>() == 0 {
+            Err(io::Error::other("injected fault"))
         } else {
             item
         }
@@ -132,13 +132,13 @@ where
 }
 
 #[derive(Debug, Display)]
-#[display(fmt = "injected fault")]
+#[display("injected fault")]
 pub struct FaultError;
 
 impl std::error::Error for FaultError {}
 
 impl From<FaultError> for io::Error {
     fn from(error: FaultError) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, error.to_string())
+        io::Error::other(error.to_string())
     }
 }

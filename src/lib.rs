@@ -45,7 +45,7 @@ use hyper::{
 use crate::app::App;
 use crate::error::Error;
 use crate::logger::Logger;
-use crate::storage::{Cached, Disk, Encrypted, Retrying, Storage, Verify, S3};
+use crate::storage::{Cached, Disk, Encrypted, Retrying, S3, Storage, Verify};
 
 #[cfg(feature = "faulty")]
 use crate::storage::Faulty;
@@ -83,19 +83,19 @@ impl Cache {
 #[derive(Debug)]
 pub struct S3ServerBuilder {
     bucket: String,
-    key: [u8; 32],
+    key: Option<[u8; 32]>,
     prefix: Option<String>,
     cdn: Option<String>,
     cache: Option<Cache>,
 }
 
 impl S3ServerBuilder {
-    pub fn new(bucket: String, key: [u8; 32]) -> Self {
+    pub fn new(bucket: String) -> Self {
         Self {
             bucket,
             prefix: None,
             cdn: None,
-            key,
+            key: None,
             cache: None,
         }
     }
@@ -108,7 +108,7 @@ impl S3ServerBuilder {
 
     /// Sets the encryption key to use.
     pub fn key(&mut self, key: [u8; 32]) -> &mut Self {
-        self.key = key;
+        self.key = Some(key);
         self
     }
 
@@ -144,13 +144,13 @@ impl S3ServerBuilder {
         let prefix = self.prefix.unwrap_or_else(|| String::from("lfs"));
 
         if self.cdn.is_some() {
-            log::warn!(
+            tracing::warn!(
                 "A CDN was specified. Since uploads and downloads do not flow \
                  through Rudolfs in this case, they will *not* be encrypted."
             );
 
             if self.cache.take().is_some() {
-                log::warn!(
+                tracing::warn!(
                     "A local disk cache does not work with a CDN and will be \
                      disabled."
                 );
@@ -177,13 +177,32 @@ impl S3ServerBuilder {
                 let disk = Faulty::new(disk);
 
                 let cache = Cached::new(cache.max_size, disk, s3).await?;
-                let storage = Verify::new(Encrypted::new(self.key, cache));
-                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+
+                match self.key {
+                    Some(key) => {
+                        let storage = Verify::new(Encrypted::new(key, cache));
+                        Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+                    }
+                    None => {
+                        let storage = Verify::new(cache);
+                        Ok(Box::new(spawn_server(
+                            storage,
+                            &addr,
+                            auth_key.clone(),
+                        )))
+                    }
+                }
             }
-            None => {
-                let storage = Verify::new(Encrypted::new(self.key, s3));
-                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
-            }
+            None => match self.key {
+                Some(key) => {
+                    let storage = Verify::new(Encrypted::new(key, s3));
+                    Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+                }
+                None => {
+                    let storage = Verify::new(s3);
+                    Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+                }
+            },
         }
     }
 
@@ -196,7 +215,7 @@ impl S3ServerBuilder {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let server = self.spawn(addr, auth_key).await?;
 
-        log::info!("Listening on {}", server.addr());
+        tracing::info!("Listening on {}", server.addr());
 
         server.await?;
         Ok(())
@@ -206,24 +225,24 @@ impl S3ServerBuilder {
 #[derive(Debug)]
 pub struct LocalServerBuilder {
     path: PathBuf,
-    key: [u8; 32],
+    key: Option<[u8; 32]>,
     cache: Option<Cache>,
 }
 
 impl LocalServerBuilder {
     /// Creates a local server builder. `path` is the path to the folder where
     /// all of the LFS data will be stored.
-    pub fn new(path: PathBuf, key: [u8; 32]) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         Self {
             path,
-            key,
+            key: None,
             cache: None,
         }
     }
 
     /// Sets the encryption key to use.
     pub fn key(&mut self, key: [u8; 32]) -> &mut Self {
-        self.key = key;
+        self.key = Some(key);
         self
     }
 
@@ -243,15 +262,28 @@ impl LocalServerBuilder {
         self,
         addr: SocketAddr,
         auth_key: Option<[u8; 32]>,
-    ) -> Result<impl Server, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn Server + Unpin + Send>, Box<dyn std::error::Error>>
+    {
         let storage = Disk::new(self.path).map_err(Error::from).await?;
-        let storage = Verify::new(Encrypted::new(self.key, storage));
-
-        log::info!("Local disk storage initialized.");
-
         let auth_key = auth_key.map(auth::parse_auth_key);
 
-        Ok(spawn_server(storage, &addr, auth_key))
+        match self.key {
+            Some(key) => {
+                let storage = Verify::new(Encrypted::new(key, storage));
+                tracing::info!(
+                    "Local disk storage initialized (with encryption)."
+                );
+                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+            }
+            None => {
+                let storage = Verify::new(storage);
+                tracing::info!(
+                    "Local disk storage initialized (without encryption)."
+                );
+
+                Ok(Box::new(spawn_server(storage, &addr, auth_key)))
+            }
+        }
     }
 
     /// Spawns the server and runs it to completion. This will run forever
@@ -263,7 +295,7 @@ impl LocalServerBuilder {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let server = self.spawn(addr, auth_key).await?;
 
-        log::info!("Listening on {}", server.addr());
+        tracing::info!("Listening on {}", server.addr());
 
         server.await?;
         Ok(())
@@ -274,7 +306,7 @@ fn spawn_server<S>(
     storage: S,
     addr: &SocketAddr,
     auth_key: Option<auth::JwtKeyType>,
-) -> impl Server
+) -> impl Server + use<S>
 where
     S: Storage + Send + Sync + 'static,
     S::Error: Into<Error>,

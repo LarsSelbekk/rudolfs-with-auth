@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::storage::Namespace;
 use base64::Engine;
-use http::{header, HeaderMap};
+use hyper::{HeaderMap, header};
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
 

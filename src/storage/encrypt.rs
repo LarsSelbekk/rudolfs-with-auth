@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use futures::{stream::StreamExt, Stream};
+use futures::{Stream, stream::StreamExt};
 
 use super::{LFSObject, Storage, StorageKey, StorageStream};
 
@@ -50,10 +50,7 @@ where
         let mut bytes = BytesMut::from(bytes?.as_ref());
 
         chacha.xor_read(bytes.as_mut()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "reached end of xchacha20 keystream",
-            )
+            io::Error::other("reached end of xchacha20 keystream")
         })?;
 
         Ok(bytes.freeze())

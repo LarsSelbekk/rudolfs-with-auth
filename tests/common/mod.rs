@@ -17,16 +17,25 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+#![allow(unused)]
 use std::fs::{self, File};
 use std::io;
 use std::io::Write;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Mutex;
 
 use duct::cmd;
 use jsonwebtoken::{Algorithm, Header};
 use rand::Rng;
 use serde::Serialize;
+
+/// Bind test server to localhost port 0. We don't want this server to be
+/// externally visible.
+pub const SERVER_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
 
 /// A temporary git repository.
 pub struct GitRepo {
@@ -41,7 +50,9 @@ impl GitRepo {
         let path = repo.path();
 
         cmd!("git", "init", ".").dir(path).run()?;
-        cmd!("git", "lfs", "install").dir(path).run()?;
+
+        git_lfs_install(path)?;
+
         cmd!("git", "remote", "add", "origin", "fake_remote")
             .dir(path)
             .run()?;
@@ -199,12 +210,24 @@ where
     Ok(())
 }
 
-pub fn init_logger() {
-    let _ = env_logger::builder()
-        // Include all events in tests
-        .filter_module("rudolfs", log::LevelFilter::max())
-        // Ensure events are captured by `cargo test`
-        .is_test(true)
-        // Ignore errors initializing the logger if tests race to configure it
-        .try_init();
+/// Sets the default subscriber for the current thread until the guard is
+/// dropped.
+///
+/// NOTE: Use `cargo test -- --nocapture` to see server logs.
+pub fn init_logger() -> tracing::subscriber::DefaultGuard {
+    let subscriber = tracing_subscriber::fmt().with_test_writer().finish();
+    tracing::subscriber::set_default(subscriber)
+}
+
+/// Runs `git lfs install`, but serializes it across unit tests. Tests are flaky
+/// if this is not done because it tries to overwrite `~/.gitconfig` and races
+/// with itself.
+fn git_lfs_install(path: &Path) -> io::Result<()> {
+    static LFS_INSTALL: Mutex<()> = Mutex::new(());
+
+    let _guard = LFS_INSTALL.lock().unwrap();
+
+    cmd!("git", "lfs", "install").dir(path).run()?;
+
+    Ok(())
 }

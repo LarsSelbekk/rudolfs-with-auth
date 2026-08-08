@@ -1,11 +1,21 @@
 # Changelog
 
+## v0.3.8
+
+ - Send html content type on index page
+ - Minor dependency updates and lint fixes
+
+## v0.3.7
+
+ - Made encryption optional. If `--key` is not specified, LFS objects are not
+   encrypted.
+
 ## v0.3.6
 
-- Bumped versions of various dependencies.
-- Fixed Minio environment variables in `docker-compose.minio.yml`
-  * `MINIO_ACCESS_KEY` was renamed to `MINIO_ROOT_USER`
-  * `MINIO_SECRET_KEY` was renamed to `MINIO_ROOT_PASSWORD`
+ - Bumped versions of various dependencies.
+ - Fixed Minio environment variables in `docker-compose.minio.yml`
+   * `MINIO_ACCESS_KEY` was renamed to `MINIO_ROOT_USER`
+   * `MINIO_SECRET_KEY` was renamed to `MINIO_ROOT_PASSWORD`
 
 ## v0.3.5
 

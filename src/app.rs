@@ -28,8 +28,11 @@ use futures::{
     future::{self, BoxFuture},
     stream::TryStreamExt,
 };
-use http::{self, header, HeaderMap, StatusCode, Uri};
-use hyper::{self, body::Body, service::Service, Method, Request, Response};
+
+use hyper::{
+    self, HeaderMap, Method, Request, Response, StatusCode, Uri, body::Body,
+    header, service::Service,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthError;
@@ -96,6 +99,7 @@ where
 
         Ok(Response::builder()
             .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html")
             .body(template.render()?.into())?)
     }
 
@@ -125,7 +129,7 @@ where
             _ => {
                 return Ok(Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(Body::from("Missing org/project in URL"))?)
+                    .body(Body::from("Missing org/project in URL"))?);
             }
         };
 
@@ -138,7 +142,7 @@ where
                     None => {
                         return Ok(Response::builder()
                             .status(StatusCode::BAD_REQUEST)
-                            .body(Body::from("Missing OID parameter."))?)
+                            .body(Body::from("Missing OID parameter."))?);
                     }
                 };
 
@@ -216,9 +220,7 @@ where
         };
 
         // Verify the SHA256 of the uploaded object as it is being uploaded.
-        let stream = req
-            .into_body()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+        let stream = req.into_body().map_err(io::Error::other);
 
         let object = LFSObject::new(len, Box::pin(stream));
 
@@ -238,12 +240,12 @@ where
         let val: lfs::VerifyRequest = from_json(req.into_body()).await?;
         let key = StorageKey::new(namespace, val.oid);
 
-        if let Some(size) = storage.size(&key).await? {
-            if size == val.size {
-                return Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::empty())?);
-            }
+        if let Some(size) = storage.size(&key).await?
+            && size == val.size
+        {
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::empty())?);
         }
 
         // Object doesn't exist or the size is incorrect.
@@ -270,12 +272,12 @@ where
             Ok(val) => {
                 let operation = val.operation;
 
-                if let lfs::Operation::Upload = operation {
-                    if let Err(err) = auth::verify_edit_access(
+                if let lfs::Operation::Upload = operation
+                    && let Err(err) = auth::verify_edit_access(
                         &namespace, &headers, &auth_key,
-                    ) {
-                        return auth_error_to_response(err, &namespace);
-                    }
+                    )
+                {
+                    return auth_error_to_response(err, &namespace);
                 }
 
                 // For each object, check if it exists in the storage
@@ -357,7 +359,7 @@ where
     let size = match size {
         Ok(size) => size,
         Err(err) => {
-            log::error!("batch response error: {}", err);
+            tracing::error!("batch response error: {err}");
 
             // Return a generic "500 - Internal Server Error" for objects that
             // we failed to get the size of. This is usually caused by some
@@ -422,8 +424,7 @@ where
                         }),
                         verify: Some(lfs::Action {
                             href: format!(
-                                "{}api/{}/objects/verify",
-                                uri, namespace
+                                "{uri}api/{namespace}/objects/verify"
                             ),
                             header: extract_auth_header(headers),
                             expires_in: None,
@@ -488,7 +489,7 @@ fn extract_auth_header(
     headers: &HeaderMap,
 ) -> Option<BTreeMap<String, String>> {
     let headers = headers.iter().filter_map(|(k, v)| {
-        if k == http::header::AUTHORIZATION {
+        if k == header::AUTHORIZATION {
             let value = String::from_utf8_lossy(v.as_bytes()).to_string();
             Some((k.to_string(), value))
         } else {
@@ -496,11 +497,7 @@ fn extract_auth_header(
         }
     });
     let map = BTreeMap::from_iter(headers);
-    if map.is_empty() {
-        None
-    } else {
-        Some(map)
-    }
+    if map.is_empty() { None } else { Some(map) }
 }
 
 impl<S> Service<Request<Body>> for App<S>

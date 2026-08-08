@@ -18,12 +18,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use async_trait::async_trait;
-use backoff::future::retry;
 use backoff::ExponentialBackoff;
+use backoff::future::retry;
 use bytes::{Bytes, BytesMut};
 use derive_more::{Display, From};
 use futures::{stream, stream::TryStreamExt};
-use http::{HeaderMap, StatusCode};
+use hyper::{HeaderMap, StatusCode};
 use rusoto_core::request::BufferedHttpResponse;
 use rusoto_core::{HttpClient, Region, RusotoError};
 use rusoto_credential::{
@@ -34,8 +34,8 @@ use rusoto_s3::{
     CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
     CreateMultipartUploadRequest, GetObjectError, GetObjectRequest,
     HeadBucketError, HeadBucketRequest, HeadObjectError, HeadObjectRequest,
-    PutObjectError, PutObjectRequest, S3Client, StreamingBody, UploadPartError,
-    UploadPartRequest, S3,
+    PutObjectError, PutObjectRequest, S3, S3Client, StreamingBody,
+    UploadPartError, UploadPartRequest,
 };
 use rusoto_sts::WebIdentityProvider;
 use tokio::io::AsyncReadExt;
@@ -73,13 +73,13 @@ impl ::std::error::Error for Error {}
 
 #[derive(Debug, Display)]
 pub enum InitError {
-    #[display(fmt = "Invalid S3 bucket name")]
+    #[display("Invalid S3 bucket name")]
     Bucket,
 
-    #[display(fmt = "Invalid S3 credentials")]
+    #[display("Invalid S3 credentials")]
     Credentials,
 
-    #[display(fmt = "{}", _0)]
+    #[display("{_0}")]
     Other(String),
 }
 
@@ -176,7 +176,7 @@ impl Backend {
             Region::default()
         };
 
-        log::info!(
+        tracing::info!(
             "Connecting to S3 bucket '{}' at region '{}'",
             bucket,
             region.name()
@@ -187,7 +187,7 @@ impl Backend {
 
         let (client, credential_provider): (_, BoxedCredentialProvider) =
             if k8s_provider.credentials().await.is_ok() {
-                log::info!("Using credentials from Kubernetes");
+                tracing::info!("Using credentials from Kubernetes");
                 let provider = AutoRefreshingProvider::new(k8s_provider)?;
                 let client = S3Client::new_with(
                     HttpClient::new()?,
@@ -248,7 +248,7 @@ impl<C> Backend<C> {
         })
         .await?;
 
-        log::info!("Successfully authorized with AWS");
+        tracing::info!("Successfully authorized with AWS");
 
         Ok(Backend {
             client,
@@ -261,7 +261,11 @@ impl<C> Backend<C> {
     }
 
     fn key_to_path(&self, key: &StorageKey) -> String {
-        format!("{}/{}/{}", self.prefix, key.namespace(), key.oid().path())
+        if self.prefix.is_empty() {
+            format!("{}/{}", key.namespace(), key.oid().path())
+        } else {
+            format!("{}/{}/{}", self.prefix, key.namespace(), key.oid().path())
+        }
     }
 }
 

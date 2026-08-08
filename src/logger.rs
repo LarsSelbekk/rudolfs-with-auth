@@ -25,7 +25,7 @@ use std::time::Instant;
 
 use futures::future::{BoxFuture, FutureExt};
 use humantime::format_duration;
-use hyper::{service::Service, Body, Request, Response};
+use hyper::{Body, Request, Response, service::Service};
 
 /// Wraps a service to provide logging on both the request and the response.
 pub struct Logger<S> {
@@ -68,7 +68,7 @@ where
 
         Box::pin(self.service.call(req).inspect(
             move |response| match response {
-                Ok(response) => log::info!(
+                Ok(response) => tracing::info!(
                     "[{}] {} {} - {} ({})",
                     remote_addr.ip(),
                     method,
@@ -76,7 +76,7 @@ where
                     response.status(),
                     format_duration(start.elapsed()),
                 ),
-                Err(err) => log::error!(
+                Err(err) => tracing::error!(
                     "[{}] {} {} - {} ({})",
                     remote_addr.ip(),
                     method,

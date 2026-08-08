@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use hex::FromHex;
 use structopt::StructOpt;
 
+use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
+
 use rudolfs::{Cache, LocalServerBuilder, S3ServerBuilder};
 
 // Additional help to append to the end when `--help` is specified.
@@ -49,7 +52,7 @@ struct GlobalArgs {
     parse(try_from_str = FromHex::from_hex),
     env = "RUDOLFS_KEY"
     )]
-    key: [u8; 32],
+    key: Option<[u8; 32]>,
 
     /// The hex-formatted secret key to use for edit-access restriction, if
     /// any. If not specified, no authentication will be used.
@@ -75,13 +78,13 @@ struct GlobalArgs {
     )]
     max_cache_size: human_size::Size,
 
-    /// Logging level to use.
+    /// Logging level to use. Example: "debug"
     #[structopt(
         long = "log-level",
         default_value = "info",
         env = "RUDOLFS_LOG"
     )]
-    log_level: log::LevelFilter,
+    log_level: LevelFilter,
 }
 
 #[derive(StructOpt)]
@@ -90,7 +93,8 @@ struct S3Args {
     #[structopt(long, env = "RUDOLFS_S3_BUCKET")]
     bucket: String,
 
-    /// Amazon S3 path prefix to use.
+    /// Amazon S3 path prefix to use: `<prefix>/<namespace>/<oid>`
+    /// Passing an empty string omits the prefix: `<namespace>/<oid>`.
     #[structopt(long, default_value = "lfs", env = "RUDOLFS_S3_PREFIX")]
     prefix: String,
 
@@ -111,16 +115,21 @@ struct LocalArgs {
 impl Args {
     async fn main(self) -> Result<(), Box<dyn std::error::Error>> {
         // Initialize logging.
-        let mut logger_builder = pretty_env_logger::formatted_timed_builder();
-        logger_builder.filter_module("rudolfs", self.global.log_level);
-
-        if let Ok(env) = std::env::var("RUST_LOG") {
-            // Support the addition of RUST_LOG to help with debugging
-            // dependencies, such as Hyper.
-            logger_builder.parse_filters(&env);
-        }
-
-        logger_builder.init();
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive(
+                    // Filter directive for this crate specifically. This will
+                    // not override any directives from RUST_LOG unless it
+                    // overlaps.
+                    format!(
+                        "{}={}",
+                        env!("CARGO_PKG_NAME"),
+                        self.global.log_level
+                    )
+                    .parse()?,
+                ),
+            )
+            .init();
 
         // Find a socket address to bind to. This will resolve domain names.
         let addr = match self.global.host {
@@ -132,17 +141,17 @@ impl Args {
         };
 
         if self.global.auth_key.is_some() {
-            log::info!(
+            tracing::info!(
                 "Restricting mutation to authorized users using tokens."
             );
         } else {
-            log::info!(
+            tracing::info!(
                 "Allowing unauthenticated mutation, only use in a secure \
                  environment."
             );
         }
 
-        log::info!("Initializing storage...");
+        tracing::info!("Initializing storage...");
 
         match self.backend {
             Backend::S3(s3) => s3.run(addr, self.global).await?,
@@ -159,8 +168,12 @@ impl S3Args {
         addr: SocketAddr,
         global_args: GlobalArgs,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut builder = S3ServerBuilder::new(self.bucket, global_args.key);
+        let mut builder = S3ServerBuilder::new(self.bucket);
         builder.prefix(self.prefix);
+
+        if let Some(key) = global_args.key {
+            builder.key(key);
+        }
 
         if let Some(cdn) = self.cdn {
             builder.cdn(cdn);
@@ -184,7 +197,11 @@ impl LocalArgs {
         addr: SocketAddr,
         global_args: GlobalArgs,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut builder = LocalServerBuilder::new(self.path, global_args.key);
+        let mut builder = LocalServerBuilder::new(self.path);
+
+        if let Some(key) = global_args.key {
+            builder.key(key);
+        }
 
         if let Some(cache_dir) = global_args.cache_dir {
             let max_cache_size = global_args
@@ -212,7 +229,7 @@ fn try_parse_base64(inp: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
 #[tokio::main]
 async fn main() {
     let exit_code = if let Err(err) = Args::from_args().main().await {
-        log::error!("{}", err);
+        tracing::error!("{err}");
         1
     } else {
         0

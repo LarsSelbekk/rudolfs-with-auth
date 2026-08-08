@@ -24,17 +24,17 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use futures::future::Either;
-use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rudolfs::{LocalServerBuilder, Server};
 use tokio::sync::oneshot;
 
-use common::{init_logger, GitRepo};
+use common::{GitRepo, init_logger};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn local_authenticated_smoke_test(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn local_authenticated_smoke_test()
+-> Result<(), Box<dyn std::error::Error>> {
     init_logger();
 
     // Make sure our seed is deterministic. This makes it easier to reproduce
@@ -42,7 +42,7 @@ async fn local_authenticated_smoke_test(
     let mut rng = StdRng::seed_from_u64(42);
 
     let data = tempfile::TempDir::new()?;
-    let key = rng.gen();
+    let key: [u8; 32] = rng.random();
 
     let secret: [u8; 32] = base64::engine::GeneralPurpose::new(
         &base64::alphabet::STANDARD,
@@ -52,7 +52,8 @@ async fn local_authenticated_smoke_test(
     .try_into()
     .unwrap();
     let namespace = "test/test".to_string();
-    let server = LocalServerBuilder::new(data.path().into(), key);
+    let mut server = LocalServerBuilder::new(data.path().into());
+    server.key(key);
     let server = server
         .spawn(SocketAddr::from(([0, 0, 0, 0], 0)), Some(secret))
         .await?;
