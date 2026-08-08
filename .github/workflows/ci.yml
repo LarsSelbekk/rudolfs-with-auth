@@ -78,3 +78,18 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-features
+
+  build-and-push-image:
+    name: Build and push Docker image
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+    needs:
+      - check
+      - test
+      - rustfmt
+      - clippy
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: larsselbekk/github-actions/.github/workflows/build-and-push-image.yml@main
